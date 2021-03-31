@@ -35,18 +35,14 @@ histo_runtimes <- ggplot(data = d, aes(x = runtimeMinutes)) + geom_histogram(bin
 histo_runtimes
 
 #population mean and SD for runtimeMins 
-results <- d %>% group_by(decade) %>%
-  summarise(
-    avgTime = mean(runtimeMinutes, na.rm = TRUE), 
-    sdTime = sd(runtimeMinutes, na.rm = TRUE)
-  )
-results
+(results <- group_by(d, decade) %>%
+  summarise(avgTime = mean(runtimeMinutes),sdTime = sd(runtimeMinutes)))
 
 
 #sample of 100 movies per decade and calculate mean, sd, and se for each group
 set.seed(1)
 n <- 100
-s <- d %>% group_by(decade) %>% sample_n(size = n, replcae = FALSE) %>%
+s <- group_by(d, decade) %>% sample_n(size = n, replcae = FALSE) %>%
   summarise(single_sample_size = n(), single_sample_mean = mean(runtimeMinutes),
             single_sample_sd = sd(runtimeMinutes), single_sample_se = sd(runtimeMinutes)/sqrt(n))
 s
@@ -56,15 +52,15 @@ pop_sd <- results$sdTime
 pop_se <- pop_sd/sqrt(n)
 
 #compare sample and population stats 
-samp_stats <- cbind(pop_mean, pop_sd, pop_se, s)
-
+(c <- cbind(pop_mean, pop_sd, pop_se, s))
 
 #generate a sampling distribution of mean of runtimeMins
 set.seed(1) 
+n <- 100
 num_trials <- 1000
 samp_dist_stats<- 1:num_trials %>%
   map_dfr(
-    ~ d %>% group_by(decade) %>%
+    ~ group_by(d, decade) %>%
       slice_sample(n = 100)%>%
       summarize(samp_means = mean(runtimeMinutes), samp_sd = sd(runtimeMinutes))
   ) %>% mutate(n = 100)
@@ -72,21 +68,17 @@ samp_dist_stats<- 1:num_trials %>%
 samp_dist_stats 
 
 #mean and sd for each decade from the sampling distribution 
-m <- aggregate(samp_dist_stats$samp_means, list(samp_dist_stats$decade), mean)
-sd <- aggregate(samp_dist_stats$samp_sd, list(samp_dist_stats$decade), sd)
+samp_dist_m <- aggregate(samp_dist_stats$samp_means, list(samp_dist_stats$decade), mean)
+samp_dist_sd <- aggregate(samp_dist_stats$samp_sd, list(samp_dist_stats$decade), sd) #this will act as the se for the samp dist
 
 #plot histogram of sample distribution
 p <- ggplot(data = samp_dist_stats, aes(x = samp_means)) + geom_histogram(binwidth = 1, col ="black", fill = "red") + facet_wrap(~decade)
 p #normal distribution 
 
 #compare standard errors
-samp_se <- s$single_sample_se #se from first sample of 100
-pop_se #se from known population
-samp_dist_se <- (sd[,2]/sqrt(100)) #this isn't right???? - CHECK THIS 
+compare <- data.frame("SE estimate from 1 samp" = s$single_sample_se, "SE calculate form pop SD" = pop_se, "SE estimate from samp dist" = samp_dist_sd[,2]) 
+knitr::kable(compare)
 
-cbind(samp_se, pop_se, samp_dist_se)
-
- 
 ```
 
 ## Challenge 2 
@@ -96,10 +88,10 @@ Every morning at the same time, a bee bioloigist goes and sits in a field in the
 
 ```{r}
 
-#a random variable x has poisson distirbution with a mean of 12. 
+#a random variable x has poisson distribution with a mean of 12. 
 
 #P(x<=9)
-ppois(q=9, lambda = 12, lower.tail = T)
+ppois(q=9, lambda = 12)
 
 #P(x=0)
 dpois(x=0, lambda = 12)
@@ -108,32 +100,24 @@ dpois(x=0, lambda = 12)
 dpois(x=5, lambda = 12)
 
 #P(x>18)
-1 - ppois(q=19, lambda = 12) #19 beacuse we dont want to include 18. 
+1 - ppois(q=18, lambda = 12) 
   
 #plot relevant Poisson mass function in range 0:24
-l <- 12
-p1 <-
-  plotDist(
-    "pois",
-    lambda = l,
-    main = paste0("Poisson Distribution\nwith lambda=", l),
-    xlab = "x",
-    ylab = "Pr(X=x)"
-  )
-p1
+plotDist("pois", lambda = 12, xlim = c(0,24), kind = "histogram", main = "PMF for Poisson",xlab = "Number of Arriving Bees", ylab = "Frequency")
 
 #simulate 1460 results from this distribution
-b <- rpois(n=1460, lambda = 12)
+set.seed(100)
+sim <- rpois(n=1460, lambda = 12)
 
 #histogram
 
-p2 <- histogram(b,
+p2 <- histogram(sim, xlim = c(0, 24),
   main = "Poisson Distribution of simulated results, lambda = 12",
-  type = "density",
-  xlim = c(0, 24)
-) 
+  type = "density", width = 1, center = 12) 
 p2
-#the simulated results are very similar to those displayed on the probability mass function plot above. 
+mean(sim)
+var(sim)
+#the simulated results are very similar to those displayed on the probability mass function plot above. Both are a mean and variance of approx. 12. 
 
 ```
 
@@ -146,68 +130,55 @@ Zombies data set. This data includes the first and last name and gender of the e
 library(ggplot2)
 library(patchwork)
 library(gridExtra)
-z <- "https://raw.githubusercontent.com/difiore/ada-2021-datasets/master/zombies.csv"
-z <- read_csv(z, col_names = TRUE)
-head(z)
+library(radiant)
+library(cowplot)
+library(purrr)
 
-#population mean and SD
+f <- "https://raw.githubusercontent.com/difiore/ada-2021-datasets/master/zombies.csv"
+z <- read_csv(f, col_names = TRUE)
 
-mean_height <- mean(z$height) #simple version of the task, try to condense later 
-mean_weight <- mean(z$weight)
-mean_age <- mean(z$age)
-mean_kills <- mean(z$zombies_killed)
-mean_edu <- mean(z$years_of_education)
+survivors <- select(z, "gender", "height", "weight", "age", "zombies_killed", "years_of_education")
 
-#another version of getting mean 
-p <- z %>% summarise(across(c(height, weight, age, zombies_killed, years_of_education), mean, na.rm = T))
+#population mean and SD for each quantitative random variable
 
-#standard deviation
-pop_var <- function(x) { #function for getting the sd 
-  sqrt(sum((x - mean(x))^2) / length(x))
-}
+pop_mean <- summarise(survivors, mean(height), mean(weight), mean(age), mean(zombies_killed), mean(years_of_education))
 
-sd_height <- pop_var(z$height)
-sd_weight <- pop_var(z$weight)
-sd_age <- pop_var(z$age)
-sd_kills <- pop_var(z$zombies_killed)
-sd_edu <- pop_var(z$years_of_education)
+pop_sd <- summarise(survivors, sdpop(height), sdpop(weight), sdpop(age), sdpop(zombies_killed), sdpop(years_of_education))
 
+pop_summary<- data.frame(variable=c("Height", "Weight", "Age", "Kills", "Education"), MEAN=t(pop_mean), SD=t(pop_sd))
+knitr::kable(pop_summary)
 
-#boxplots
-b1 <- ggplot(z, aes(x = gender, y = height)) + geom_boxplot() 
-b2 <- ggplot(z, aes(x = gender, y = weight)) + geom_boxplot() 
-b3 <- ggplot(z, aes(x = gender, y = age)) + geom_boxplot() 
-b4 <- ggplot(z, aes(x = gender, y = zombies_killed)) + geom_boxplot() 
-b5 <- ggplot(z, aes(x = gender, y = years_of_education)) + geom_boxplot() 
-(b1 | b2) / (b3 |b4 | b5) 
-#need to combine and tidy these plots 
+#boxplots of each variable by gender
+b1 <- ggplot(survivors, aes(x = gender, y = height)) + geom_boxplot() 
+b2 <- ggplot(survivors, aes(x = gender, y = weight)) + geom_boxplot() 
+b3 <- ggplot(survivors, aes(x = gender, y = age)) + geom_boxplot() 
+b4 <- ggplot(survivors, aes(x = gender, y = zombies_killed)) + geom_boxplot() 
+b5 <- ggplot(survivors, aes(x = gender, y = years_of_education)) + geom_boxplot() 
+plot_grid(b1, b2, b3, b4, b5, ncol = 3)
 
 
-#height and weight in relation to age 
-p1 <- ggplot(data = z, aes(
-  x = height,
-  y = age,
-  color = factor(gender)
-))
+#height and weight in relation to age by gender 
+p1 <- ggplot(data = survivors, aes(
+  x = age,
+  y = height,
+  color = factor(gender)))
 p1 <- p1 + xlab("Height") + ylab("Age")
 p1 <- p1 + geom_point(na.rm = TRUE)
 p1 <- p1 + theme(legend.position = "bottom", legend.title = element_blank())
 
-p2 <- ggplot(data = z, aes(
-  x = weight,
-  y = age,
-  color = factor(gender)
-))
+p2 <- ggplot(data = survivors, aes(
+  x = age,
+  y = weight,
+  color = factor(gender)))
 p2 <- p2 + xlab("Weight") + ylab("Age")
 p2 <- p2 + geom_point(na.rm = TRUE)
 p2 <- p2 + theme(legend.position = "bottom", legend.title = element_blank())
 
-grid.arrange(p1, p2, nrow = 1)
-
+plot_grid(p1, p2, nrow = 1)
 ```
 ---
 Do these variables (age, weight and height) seem related? 
-Height increases as age increased for both male and female and so the two variable are related, this is shown by the normal tendency of the distribution. Weight seems less related to age, there is some slight correlation although this isn't strong. 
+Yes, both variables (height and weight) increase with age. 
 ---
 
 ---
@@ -215,48 +186,40 @@ Using histograms and Q-Q plots, check whether the quantitative variables seem to
 (normal = height, weight, age), (Possion = kills and education)
 ---
 ``` {r}
-#----Height
-qqnorm(z$height, main = "QQ Plot - Height")  #normal distribution 
+#Height
+par(mfrow= c(1,2))
+histogram(survivors$height, main = "Height", xlab = "") 
+qqnorm(survivors$height, main = "QQ Plot - Height")
+qqline(survivors$height, col = "blue")
+#normal 
 
-histogram(z$height,
-          main = "Normal Distribution",
-          xlab = "Height"
-) #normal distribution of height 
+#Weight
+par(mfrow= c(1,2))
+histogram(survivors$weight, main = "Weight", xlab = "") 
+qqnorm(survivors$weight, main = "QQ Plot - Weight")
+qqline(survivors$weight, col = "blue")
+#normal
 
+#Age
+par(mfrow= c(1,2))
+histogram(survivors$age, main = "Age", xlab = "") 
+qqnorm(survivors$age, main = "QQ Plot - Age")
+qqline(survivors$age, col = "blue") 
+#normal
 
-#----Weight
-qqnorm(z$weight, main = "QQ Plot - Weight") #normal 
+#Number of zombies killed 
+par(mfrow= c(1,2))
+histogram(survivors$zombies_killed, main = "Kills", xlab = "") 
+qqnorm(survivors$zombies_killed, main = "QQ Plot - Kills")
+qqline(survivors$zombies_killed, col = "blue") 
+#Poisson
 
-histogram(z$weight,
-          main = "Normal Distribution",
-          xlab = "Weight"
-) #normal distribution of weight 
-
-#----Age
-qqnorm(z$age, main = "QQ Plot - Age") #normal
-
-histogram(z$age,
-          main = "Normal Distribution",
-          xlab = "Age"
-) #normal distribution of Age
-
-#----Number of zombies killed 
-qqnorm(z$zombies_killed, main = "QQ Plot - Number of Zombie kills") #non-normal, Possion distribution 
-
-histogram(z$zombies_killed,
-          main = "Possion Distribution",
-          xlab = "Number of Zombie kills"
-          )
-
-
-#----years of education
-qqnorm(z$years_of_education, main = "QQ Plot - Years of Education") #non-normal, Possion distribution 
-
-histogram(z$years_of_education,
-          main = "Possion Distribution",
-          xlab = "Years of Education"
-) 
-
+#Years of education
+par(mfrow= c(1,2))
+histogram(survivors$years_of_education, main = "Education", xlab = "") 
+qqnorm(survivors$years_of_education, main = "QQ Plot - Education")
+qqline(survivors$years_of_education, col = "blue") 
+#Poisson
 ```
 ---
 Sample ONE subset of 50 zombie apocalypse survivors (without replacement) from this population and calculate the mean and sample standard deviation for each variable. Also estimate the standard error for each variable based on this sample and use that to construct a 95% confidence interval for each mean.
@@ -266,37 +229,52 @@ Sample ONE subset of 50 zombie apocalypse survivors (without replacement) from t
 #sample of 50 survivors 
 set.seed(1)
 n <- 50 
-s <- sample_n(z, size = n, replace = FALSE)
+s <- sample_n(survivors, size = n, replace = FALSE)
 
-s_means <- summarise(s, 
-                     height_mean = mean(height),
-                     weight_mean =mean(weight), 
-                     age_mean = mean(age), 
-                     kills_mean = mean(zombies_killed), 
-                     edu_mean = mean(years_of_education)) #means of each variable 
+#means
+s_means <- summarise(s, across(c(height, weight, age, zombies_killed, years_of_education), list(mean=mean)))
+#sds
+s_sd <- summarise(s, height_sd = sd(height),weight_sd = sd(weight),age_sd = sd(age),kills_sd = sd(zombies_killed),edu_sd = sd(years_of_education))
+#(note: tried to use across function for sd but got an error message i couldn't solve)
 
-s_sd <- summarise(s, 
-                  sd_height = sd(height),
-                  sd_weight = sd(weight),
-                  sd_age = sd(age),
-                  sd_kills = sd(zombies_killed),
-                  sd_edu = sd(years_of_education))
-#sample standard deviation for each variable 
+#function for SE 
+SE <- function(x, type="normal") {
+  if (type == "normal") {
+    SE <- sd(x)/sqrt(length(x))
+  }
+  if (type == "poisson"){
+    SE<- sqrt(mean(x)/length(x))
+  }
+  return(SE)
+} #need to distinguish between distribution type in this function
 
-se <- summarise(s,
-  se_height = sciplot::se(height), 
-  se_weight = sciplot::se(weight), 
-  se_age = sciplot::se(age), 
-  se_kills = sciplot::se(zombies_killed), 
-  se_edu = sciplot::se(years_of_education)
-) #standard error for each variable 
+s_se <- tibble(SE(s$height), SE(s$weight),SE(s$age), SE(s$zombies_killed, type = "poisson"), SE(s$years_of_education, type = "poisson"))#standard error for each variable 
 
-#95% CI for each mean
-percent_ci <- 95
-alpha <- 1 - percent_ci / 100
-lower <- s_means + qnorm(alpha / 2) * se
-upper <- s_means + qnorm(1 - alpha / 2) * se
-ci <- c(lower, upper)
+#Confidence interval functions 
+alpha = 0.05
+CI.norm <- function(x){
+  CI <- mean(x) + c(-1, 1) * qnorm(1-alpha/2) * SE(x) #se function - check there is one
+  names(CI) <- c("Lower", "Upper")
+  return(CI)
+} #normal 
+
+CI.sim <- function(x){
+  sim <- NULL
+  for (i in 1:1000){
+    sim[i] <- mean(sample(x), length(x), replace = T)
+  }
+  CI <- quantile(sim, c(alpha/2, 1-alpha/2))
+names(CI) <- c("Lower", "Upper")
+return(CI)
+} #simulation
+
+#CI based on normal distribution
+s_CI.norm <- rbind(CI.norm(s$height), CI.norm(s$weight), CI.norm(s$age), CI.norm(s$zombies_killed), CI.norm(s$years_of_education))
+
+#CI based on simulation
+s_CI.sim <- rbind(CI.sim(s$height), CI.sim(s$weight), CI.sim(s$age), CI.sim(s$zombies_killed), CI.sim(s$years_of_education))
+
+single_samp_summary <- data.frame(Variable=c("Height", "Weight", "Age", "Kills", "Education"), MEAN = t(s_means), SD = t(s_sd), SE = t(s_se), CI.NORM = s_CI.norm, CI.SIMS = s_CI.sim)
 
 ```
 
@@ -311,21 +289,23 @@ k <- 99 # number of samples
 n <- 50 # size of each sample
 sample <- 1:k %>%
   map_dfr(
-    ~ z %>% 
+    ~ survivors %>% 
       slice_sample(n = n)%>%
-      summarize(height_mean = mean(height), weight_mean =mean(weight), age_mean = mean(age), kills_mean = mean(zombies_killed), edu_mean = mean(years_of_education))
+      summarize(height_mean = mean(height), weight_mean =mean(weight), age_mean = mean(age), zombies_killed_mean = mean(zombies_killed), years_of_education_mean = mean(years_of_education))
   ) %>% mutate(n = 50)
 sample
 
 (samp_dist <- bind_rows(sample, s_means)) #combine single sample and sample of 99 into one df
 
-samp_dist_mean <- samp_dist %>% summarise(height = mean(height_mean), weight = mean(weight_mean), age = mean(age_mean), kills = mean(kills_mean), edu = mean(edu_mean)) #means for the sampling distribution 
+samp_dist_mean <- samp_dist %>% summarise(height = mean(height_mean), weight = mean(weight_mean), age = mean(age_mean), kills = mean(zombies_killed_mean), edu = mean(years_of_education_mean)) #means for the sampling distribution 
 
+#calculate mean of SE for variables from each sample
 se_fun <- function(x){
   sd(x)/sqrt(100)
 } #create a function for standard error
-samp_dist_se <- samp_dist %>% summarise(height = se_fun(height_mean), weight = se_fun(weight_mean), age = se_fun(age_mean), kills = se_fun(kills_mean), edu = se_fun(edu_mean)) #standard deviations (i.e. SE) for the sampling dist. 
+samp_dist_se <- samp_dist %>% summarise(height = se_fun(height_mean), weight = se_fun(weight_mean), age = se_fun(age_mean), kills = se_fun(zombies_killed_mean), edu = se_fun(years_of_education_mean)) #standard deviations (i.e. SE) for the sampling dist. 
 
+comparison <- data.frame(Variables =c("Height", "Weight", "Age", "Kills", "Education"), "Mean_Samp_Dist" = t(samp_dist_mean), "SD_Samp_Dist" = t(samp_dist_se))
 ```
 
 ---
@@ -336,40 +316,51 @@ Finally, construct an 95% confidence interval for each mean directly from the sa
 #95% CI for each mean from the sampling dist. 
 percent_ci <- 95
 alpha <- 1 - percent_ci / 100
-lower_sim <- samp_dist_mean + qnorm(alpha / 2) * samp_dist_se
-upper_sim <- samp_dist_mean + qnorm(1 - alpha / 2) * samp_dist_se
-ci_sim <- c(lower, upper)
+lower <- samp_dist_mean + qnorm(alpha / 2) * samp_dist_se
+upper <- samp_dist_mean + qnorm(1 - alpha / 2) * samp_dist_se
+ci <- c(lower, upper)
 
 ```
 ---
 How do the standard deviations of the sampling distribution for each variable compare to the standard errors estimated from your first sample of size 50?
 ---
 ```{r}
-(se)
-(samp_dist_se)
+compare <- data.frame(Variables=c("Height", "Weight", "Age", "Kills", "Education"), "Mean of Samp Dist" = t(samp_dist_mean), "SE from pop SD" = t(pop_sd/sqrt(n)), "Single Sample SE" = t(s_se), "Samp dist SE" = t(samp_dist_se))
 
-#in comparison, the standard error from the first sample of 50 is much larger than the sd from the sampling distribution
+#All are about the same. The SE for each variable is similar to the population estimate
 
 ```
 ---
 What do sampling distributions for each variable mean look like? Are they normally distributed? 
 ---
 ```{r}
-p1 <- hist(sample$height_mean, main = "Height", xlab = "Sample Means of height", prob = T, col = "darkred")#normal
-p2 <- hist(sample$weight_mean, main = "Weight", xlab = "Sample Means of weight", prob = T, col = "darkred") #normal
-p3 <- hist(sample$age_mean, main = "Age", xlab = "Sample Means of age", prob = T, col = "darkred") #normal
-p4 <- hist(sample$kills_mean, main = "Kills", xlab = "Sample Means of kills", prob = T, col = "darkred")
-p5 <- hist(sample$edu_mean, main = "Years of Education", xlab = "Sample Means of education", prob = T, col = "darkred")
+
+par(mfrow = c(1,2))
+hist(sample$height_mean, main = "Height Means", xlab = "") #height
+qqnorm(sample$height_mean, main = "")
+qqline(sample$height_mean, col = "blue")
+hist(sample$weight_mean, main = "Weight Means", xlab = "") #weight
+qqnorm(sample$weight_mean, main = "")
+qqline(sample$weight_mean, col = "blue")
+hist(sample$age_mean, main = "Age Means", xlab = "") #age
+qqnorm(sample$age_mean, main = "")
+qqline(sample$age_mean, col = "blue")
+hist(sample$zombies_killed_mean, main = "Zombie kills Means", xlab = "") #kills
+qqnorm(sample$zombies_killed_mean, main = "")
+qqline(sample$zombies_killed_mean, col = "blue")
+hist(sample$years_of_education_mean, main = "Years of Education Means", xlab = "") #edu
+qqnorm(sample$years_of_education_mean, main = "")
+qqline(sample$years_of_education_mean, col = "blue")
 
 ```
 ---
 What about for those variables that you concluded were not originally drawn from a normal distribution? 
-They are more normal 
+All these distirbutions are normal, the two varibales that were previously poisson are now normal too. 
 ---
 ---
 How do the two 95% CIs you estimated compare to one another (i.e., the CI based on one sample and its estimated standard deviation versus the CI based on simulation)?
 ---
 ```{r}
-cbind(ci, ci_sim) #based on one sample and based on simulation 
-#they appear equal 
+cbind(s_CI.norm, s_CI.sim) #based on normal distribution and based on simulation 
+
 ```
